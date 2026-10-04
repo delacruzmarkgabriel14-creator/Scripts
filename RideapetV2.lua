@@ -185,7 +185,11 @@ local function processEggPickup(item, isVolcanoEgg)
             if baseCFrame then
                 local hrp = char.HumanoidRootPart
                 
-               -- Step 2: Automatically Drop the egg
+                -- Step 1: TP near base (35 studs away)
+                hrp.CFrame = CFrame.new(baseCFrame.Position + Vector3.new(35, 5, 35))
+                task.wait(0.5)
+                
+                -- Step 2: Automatically Drop the egg
                 local remoteFolder = ReplicatedStorage:FindFirstChild("Remotes")
                 local gameFolder = remoteFolder and remoteFolder:FindFirstChild("Game")
                 local basketDrop = gameFolder and gameFolder:FindFirstChild("BasketDrop")
@@ -214,6 +218,9 @@ local function processEggPickup(item, isVolcanoEgg)
                 
                 -- Step 4: Go to base to complete the process
                 hrp.CFrame = CFrame.new(baseCFrame.Position + Vector3.new(0, 5, 0))
+            end
+        end
+    end
     
     -- Release the lock after a short cooldown so it doesn't loop
     task.wait(2)
@@ -349,6 +356,7 @@ local function monitorEggPickup(item)
     end)
 end
 
+-- Track all current and future eggs
 for _, item in pairs(Workspace:GetDescendants()) do if isValidEgg(item) then monitorEggPickup(item) end end
 Workspace.DescendantAdded:Connect(function(item) task.wait(0.1); if isValidEgg(item) then monitorEggPickup(item) end end)
 
