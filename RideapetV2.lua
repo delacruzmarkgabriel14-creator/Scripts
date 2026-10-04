@@ -26,7 +26,7 @@ if player:FindFirstChild("PlayerGui") then removeOldGui(player.PlayerGui) end
 local AutoMagmaEnabled = false
 local AutoReturnEnabled = true
 local VOLCANO_TOP_POS = Vector3.new(-5102.843, 41405.629, -3489.114)
-local DROP_OFFSET = 85 -- Change this number to adjust how far away you drop the egg!
+local DROP_OFFSET = 85
 local isProcessingEgg = false 
 
 local eggRarityScores = {
@@ -185,9 +185,11 @@ local function processEggPickup(item, isVolcanoEgg)
             if baseCFrame then
                 local hrp = char.HumanoidRootPart
                 
-                -- Step 1: TP near base (Uses the new DROP_OFFSET variable)
+                -- Step 1: TP near base
                 hrp.CFrame = CFrame.new(baseCFrame.Position + Vector3.new(DROP_OFFSET, 5, DROP_OFFSET))
-                task.wait(0.5)
+                
+                -- Give the server 0.4s to sync location
+                task.wait(0.4)
                 
                 -- Step 2: Automatically Drop the egg
                 local remoteFolder = ReplicatedStorage:FindFirstChild("Remotes")
@@ -197,48 +199,49 @@ local function processEggPickup(item, isVolcanoEgg)
                 if basketDrop then
                     basketDrop:FireServer()
                 end
-                task.wait(1) 
-                
-                -- Step 3: Find the newly dropped egg near us and pick it up
-                local droppedEgg = nil
-                for _, v in ipairs(Workspace:GetDescendants()) do
-                    if string.find(string.lower(v.Name), "egg") and (v:IsA("Model") or v:IsA("BasePart")) then
-                        if (v:GetPivot().Position - hrp.Position).Magnitude < 30 then
-                            droppedEgg = v
-                            break
-                        end
-                    end
-                end
 
-                if droppedEgg then
-                    for i = 1, 20 do
-                        hrp.CFrame = droppedEgg:GetPivot()
-                        
-                        for _, desc in ipairs(droppedEgg:GetDescendants()) do
-                            if desc:IsA("ProximityPrompt") then
-                                pcall(function()
-                                    if fireproximityprompt then
-                                        fireproximityprompt(desc, 1)
-                                    else
-                                        desc:InputHoldBegin()
-                                        task.wait(0.1)
-                                        desc:InputHoldEnd()
-                                    end
-                                end)
+                -- Step 3: Scan close area for the dropped egg
+                for i = 1, 40 do 
+                    local closestPrompt = nil
+                    local minDist = 30
+                    
+                    for _, desc in ipairs(Workspace:GetDescendants()) do
+                        if desc:IsA("ProximityPrompt") and desc.Parent and desc.Parent:IsA("BasePart") then
+                            local dist = (desc.Parent.Position - hrp.Position).Magnitude
+                            if dist < minDist then
+                                minDist = dist
+                                closestPrompt = desc
                             end
                         end
+                    end
+                    
+                    if closestPrompt then
+                        hrp.CFrame = CFrame.new(closestPrompt.Parent.Position)
+                        task.wait(0.05) 
                         
-                        task.wait(0.2)
+                        pcall(function()
+                            if fireproximityprompt then
+                                fireproximityprompt(closestPrompt, 1)
+                            else
+                                closestPrompt:InputHoldBegin()
+                                task.wait(0.05)
+                                closestPrompt:InputHoldEnd()
+                            end
+                        end)
                         
-                        if droppedEgg:IsDescendantOf(char) then
+                        task.wait(0.1) 
+                        
+                        if not closestPrompt:IsDescendantOf(Workspace) then
                             break 
                         end
+                    else
+                        task.wait(0.1) 
                     end
                 end
                 
-                task.wait(0.5) 
+                task.wait(0.2) 
                 
-                -- Step 4: Go to base to complete the process
+                -- Step 4: Final teleport into base
                 hrp.CFrame = CFrame.new(baseCFrame.Position + Vector3.new(0, 5, 0))
             end
         end
@@ -377,7 +380,6 @@ end
 
 for _, item in pairs(Workspace:GetDescendants()) do if isValidEgg(item) then monitorEggPickup(item) end end
 Workspace.DescendantAdded:Connect(function(item) task.wait(0.1); if isValidEgg(item) then monitorEggPickup(item) end end)
-
 
 -- =========================================
 -- LOGIC BINDS
