@@ -26,7 +26,8 @@ if player:FindFirstChild("PlayerGui") then removeOldGui(player.PlayerGui) end
 local AutoMagmaEnabled = false
 local AutoReturnEnabled = true
 local VOLCANO_TOP_POS = Vector3.new(-5102.843, 41405.629, -3489.114)
-local isProcessingEgg = false -- Prevents the script from looping on mutated eggs
+local DROP_OFFSET = 85 -- Change this number to adjust how far away you drop the egg!
+local isProcessingEgg = false 
 
 local eggRarityScores = {
     volcanic = 5,
@@ -160,7 +161,6 @@ local function performMagmaMutation(item, isVolcanoEgg)
         task.wait(10)
     end
     
-    -- Direct TP to Plot after Magma Wait (speed check bypassed naturally by 10s wait)
     local baseCFrame = getPlotCFrame()
     if baseCFrame then
         hrp.CFrame = CFrame.new(baseCFrame.Position + Vector3.new(0, 5, 0))
@@ -185,8 +185,8 @@ local function processEggPickup(item, isVolcanoEgg)
             if baseCFrame then
                 local hrp = char.HumanoidRootPart
                 
-                -- Step 1: TP near base (35 studs away)
-                hrp.CFrame = CFrame.new(baseCFrame.Position + Vector3.new(35, 5, 35))
+                -- Step 1: TP near base (Uses the new DROP_OFFSET variable)
+                hrp.CFrame = CFrame.new(baseCFrame.Position + Vector3.new(DROP_OFFSET, 5, DROP_OFFSET))
                 task.wait(0.5)
                 
                 -- Step 2: Automatically Drop the egg
@@ -197,24 +197,46 @@ local function processEggPickup(item, isVolcanoEgg)
                 if basketDrop then
                     basketDrop:FireServer()
                 end
-                task.wait(0.8) -- Slightly longer wait so the egg settles on the ground
+                task.wait(1) 
                 
-                -- Step 3: Pick the egg back up
-                if item and item:IsDescendantOf(Workspace) then
-                    hrp.CFrame = item:GetPivot() -- teleport right on top of the dropped egg
-                    task.wait(0.2)
-                    for _, desc in ipairs(item:GetDescendants()) do
-                        if desc:IsA("ProximityPrompt") then
-                            if fireproximityprompt then
-                                fireproximityprompt(desc, 1)
-                            else
-                                -- Fallback for executors that don't support fireproximityprompt
-                                pcall(function() desc:InputHoldBegin(); task.wait(0.1); desc:InputHoldEnd() end)
-                            end
+                -- Step 3: Find the newly dropped egg near us and pick it up
+                local droppedEgg = nil
+                for _, v in ipairs(Workspace:GetDescendants()) do
+                    if string.find(string.lower(v.Name), "egg") and (v:IsA("Model") or v:IsA("BasePart")) then
+                        if (v:GetPivot().Position - hrp.Position).Magnitude < 30 then
+                            droppedEgg = v
+                            break
                         end
                     end
                 end
-                task.wait(0.5) -- Wait for the pickup to register in your basket
+
+                if droppedEgg then
+                    for i = 1, 20 do
+                        hrp.CFrame = droppedEgg:GetPivot()
+                        
+                        for _, desc in ipairs(droppedEgg:GetDescendants()) do
+                            if desc:IsA("ProximityPrompt") then
+                                pcall(function()
+                                    if fireproximityprompt then
+                                        fireproximityprompt(desc, 1)
+                                    else
+                                        desc:InputHoldBegin()
+                                        task.wait(0.1)
+                                        desc:InputHoldEnd()
+                                    end
+                                end)
+                            end
+                        end
+                        
+                        task.wait(0.2)
+                        
+                        if droppedEgg:IsDescendantOf(char) then
+                            break 
+                        end
+                    end
+                end
+                
+                task.wait(0.5) 
                 
                 -- Step 4: Go to base to complete the process
                 hrp.CFrame = CFrame.new(baseCFrame.Position + Vector3.new(0, 5, 0))
@@ -222,7 +244,6 @@ local function processEggPickup(item, isVolcanoEgg)
         end
     end
     
-    -- Release the lock after a short cooldown so it doesn't loop
     task.wait(2)
     isProcessingEgg = false
 end
@@ -327,7 +348,6 @@ local function monitorEggPickup(item)
     local initialPos = item:GetPivot().Position
     local isVolcanoEgg = string.find(string.lower(item.Name), "volcanic egg") ~= nil
     
-    -- Hook 1: Manual Proximity Prompt
     for _, desc in ipairs(item:GetDescendants()) do
         if desc:IsA("ProximityPrompt") then
             desc.Triggered:Connect(function(plr)
@@ -340,7 +360,6 @@ local function monitorEggPickup(item)
         end
     end
     
-    -- Hook 2: Item destroyed/vanished while you are standing on it
     item.AncestryChanged:Connect(function(_, parent)
         if parent == nil or not item:IsDescendantOf(Workspace) then
             local char = player.Character
@@ -356,7 +375,6 @@ local function monitorEggPickup(item)
     end)
 end
 
--- Track all current and future eggs
 for _, item in pairs(Workspace:GetDescendants()) do if isValidEgg(item) then monitorEggPickup(item) end end
 Workspace.DescendantAdded:Connect(function(item) task.wait(0.1); if isValidEgg(item) then monitorEggPickup(item) end end)
 
