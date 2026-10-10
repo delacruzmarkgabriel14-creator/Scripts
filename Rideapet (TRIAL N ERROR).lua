@@ -25,9 +25,14 @@ if player:FindFirstChild("PlayerGui") then removeOldGui(player.PlayerGui) end
 -- =========================================
 local AutoMagmaEnabled = false
 local AutoReturnEnabled = true
-local VOLCANO_TOP_POS = Vector3.new(-5102.843, 41405.629, -3489.114)
-local DROP_OFFSET = 85
 local isProcessingEgg = false 
+local isEnteringVolcano = false -- Prevents false triggers while entering the volcano
+
+local DROP_OFFSET = 85
+local VOLCANO_TOP_POS = Vector3.new(-5102.843, 41405.629, -3489.114)
+local VOLCANO_ENTRANCE_POS = Vector3.new(-4942.78, 41283.9, -3676.58)
+local VOLCANO_VALIDATE_POS = Vector3.new(-4966.71, 41282.8, -3656.44)
+local VOLCANIC_POS = Vector3.new(-5329.45, 40910.2, -3580.87)
 
 local eggRarityScores = {
     volcanic = 5,
@@ -98,16 +103,73 @@ local function findPart(partName)
     return nil
 end
 
-local function findVolcanoPortal()
-    for _, v in pairs(Workspace:GetDescendants()) do
-        if v:IsA("BasePart") then
-            local name = string.lower(v.Name)
-            if string.find(name, "volcano") and (string.find(name, "portal") or string.find(name, "entrance") or string.find(name, "door")) then
-                return v
+local function strikeTrigger(char, hrp, targetPos)
+    local humanoid = char:FindFirstChild("Humanoid")
+    for i = 1, 3 do
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.Anchored = false
+        char:PivotTo(CFrame.new(targetPos + Vector3.new(0, 6, 0)))
+        
+        local timeout = tick() + 1.5
+        local landed = false
+        
+        while tick() < timeout do
+            if humanoid and humanoid.FloorMaterial ~= Enum.Material.Air then
+                landed = true
+                break
             end
+            if hrp.Position.Y < (targetPos.Y - 15) then break end
+            task.wait(0.05)
+        end
+        
+        if landed then
+            task.wait(0.2)
+            return true 
         end
     end
-    return nil
+    return false
+end
+
+-- Reusable safe drop and pickup base delivery!
+local function executeDropAndPickup(hrp, baseCFrame)
+    hrp.CFrame = CFrame.new(baseCFrame.Position + Vector3.new(DROP_OFFSET, 5, DROP_OFFSET))
+    task.wait(0.4)
+    
+    local remoteFolder = ReplicatedStorage:FindFirstChild("Remotes")
+    local gameFolder = remoteFolder and remoteFolder:FindFirstChild("Game")
+    local basketDrop = gameFolder and gameFolder:FindFirstChild("BasketDrop")
+    
+    if basketDrop then basketDrop:FireServer() end
+
+    for i = 1, 40 do 
+        local closestPrompt = nil
+        local minDist = 30
+        for _, desc in ipairs(Workspace:GetDescendants()) do
+            if desc:IsA("ProximityPrompt") and desc.Parent and desc.Parent:IsA("BasePart") then
+                local dist = (desc.Parent.Position - hrp.Position).Magnitude
+                if dist < minDist then
+                    minDist = dist
+                    closestPrompt = desc
+                end
+            end
+        end
+        
+        if closestPrompt then
+            hrp.CFrame = CFrame.new(closestPrompt.Parent.Position)
+            task.wait(0.05) 
+            pcall(function()
+                if fireproximityprompt then fireproximityprompt(closestPrompt, 1)
+                else closestPrompt:InputHoldBegin(); task.wait(0.05); closestPrompt:InputHoldEnd() end
+            end)
+            task.wait(0.1) 
+            if not closestPrompt:IsDescendantOf(Workspace) then break end
+        else
+            task.wait(0.1) 
+        end
+    end
+    
+    task.wait(0.2) 
+    hrp.CFrame = CFrame.new(baseCFrame.Position + Vector3.new(0, 5, 0))
 end
 
 local function performMagmaMutation(item, isVolcanoEgg)
@@ -120,40 +182,12 @@ local function performMagmaMutation(item, isVolcanoEgg)
         task.wait(2)
         hrp.CFrame = CFrame.new(VOLCANO_TOP_POS + Vector3.new(0, 4, 0))
     else
-        local entrance = findPart("VolcanoEntrance")
-        local validate = findPart("VolcanoValidate")
-        
-        if not entrance or not validate then
-            hrp.CFrame = CFrame.new(VOLCANO_TOP_POS + Vector3.new(0, 50, 0))
-            task.wait(2)
-            entrance = findPart("VolcanoEntrance")
-            validate = findPart("VolcanoValidate")
-        end
-
-        if entrance and validate then
-            hrp.CFrame = CFrame.new(entrance.Position + Vector3.new(0, 3, 0))
-            task.wait(0.2)
-            if firetouchinterest then
-                firetouchinterest(hrp, entrance, 0)
-                task.wait()
-                firetouchinterest(hrp, entrance, 1)
-            end
-            task.wait(0.3) 
-            
-            hrp.CFrame = CFrame.new(validate.Position + Vector3.new(0, 3, 0))
-            task.wait(0.2)
-            if firetouchinterest then
-                firetouchinterest(hrp, validate, 0)
-                task.wait()
-                firetouchinterest(hrp, validate, 1)
-            end
-            task.wait(0.3) 
-        end
+        -- Since processEggPickup already ran the strikeTrigger escape out of the volcano,
+        -- we can go straight to the top of the volcano!
         hrp.CFrame = CFrame.new(VOLCANO_TOP_POS + Vector3.new(0, 4, 0))
     end
 
     task.wait(0.5)
-    
     local netFolder = ReplicatedStorage:FindFirstChild("packages") and ReplicatedStorage.packages:FindFirstChild("Net")
     local dipRemote = netFolder and netFolder:FindFirstChild("RE/VolcanoDip")
     if dipRemote then
@@ -161,14 +195,13 @@ local function performMagmaMutation(item, isVolcanoEgg)
         task.wait(10)
     end
     
+    -- Auto Magma Update: Use safe delivery routine instead of direct teleport
     local baseCFrame = getPlotCFrame()
     if baseCFrame then
-        hrp.CFrame = CFrame.new(baseCFrame.Position + Vector3.new(0, 5, 0))
+        executeDropAndPickup(hrp, baseCFrame)
     else
         local spawnLocation = Workspace:FindFirstChild("SpawnLocation", true) 
-        if spawnLocation then
-            hrp.CFrame = CFrame.new(spawnLocation.Position + Vector3.new(0, 5, 0))
-        end
+        if spawnLocation then hrp.CFrame = CFrame.new(spawnLocation.Position + Vector3.new(0, 5, 0)) end
     end
 end
 
@@ -176,73 +209,26 @@ local function processEggPickup(item, isVolcanoEgg)
     if isProcessingEgg then return end
     isProcessingEgg = true
 
+    -- Wait if still in the middle of entering the volcano
+    while isEnteringVolcano do task.wait(0.05) end
+
+    local char = player.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+
+    -- Immediately escape the guard pet and exit the volcano upon manual pickup
+    if isVolcanoEgg and char and hrp then
+        statusLabel.Text = "Escaping Volcano..."
+        strikeTrigger(char, hrp, VOLCANO_VALIDATE_POS)
+        strikeTrigger(char, hrp, VOLCANO_ENTRANCE_POS)
+    end
+
     if AutoMagmaEnabled then
         performMagmaMutation(item, isVolcanoEgg)
     elseif AutoReturnEnabled then
-        local char = player.Character
-        if char and char:FindFirstChild("HumanoidRootPart") then
+        if char and hrp then
             local baseCFrame = getPlotCFrame()
             if baseCFrame then
-                local hrp = char.HumanoidRootPart
-                
-                -- Step 1: TP near base
-                hrp.CFrame = CFrame.new(baseCFrame.Position + Vector3.new(DROP_OFFSET, 5, DROP_OFFSET))
-                
-                -- Give the server 0.4s to sync location
-                task.wait(0.4)
-                
-                -- Step 2: Automatically Drop the egg
-                local remoteFolder = ReplicatedStorage:FindFirstChild("Remotes")
-                local gameFolder = remoteFolder and remoteFolder:FindFirstChild("Game")
-                local basketDrop = gameFolder and gameFolder:FindFirstChild("BasketDrop")
-                
-                if basketDrop then
-                    basketDrop:FireServer()
-                end
-
-                -- Step 3: Scan close area for the dropped egg
-                for i = 1, 40 do 
-                    local closestPrompt = nil
-                    local minDist = 30
-                    
-                    for _, desc in ipairs(Workspace:GetDescendants()) do
-                        if desc:IsA("ProximityPrompt") and desc.Parent and desc.Parent:IsA("BasePart") then
-                            local dist = (desc.Parent.Position - hrp.Position).Magnitude
-                            if dist < minDist then
-                                minDist = dist
-                                closestPrompt = desc
-                            end
-                        end
-                    end
-                    
-                    if closestPrompt then
-                        hrp.CFrame = CFrame.new(closestPrompt.Parent.Position)
-                        task.wait(0.05) 
-                        
-                        pcall(function()
-                            if fireproximityprompt then
-                                fireproximityprompt(closestPrompt, 1)
-                            else
-                                closestPrompt:InputHoldBegin()
-                                task.wait(0.05)
-                                closestPrompt:InputHoldEnd()
-                            end
-                        end)
-                        
-                        task.wait(0.1) 
-                        
-                        if not closestPrompt:IsDescendantOf(Workspace) then
-                            break 
-                        end
-                    else
-                        task.wait(0.1) 
-                    end
-                end
-                
-                task.wait(0.2) 
-                
-                -- Step 4: Final teleport into base
-                hrp.CFrame = CFrame.new(baseCFrame.Position + Vector3.new(0, 5, 0))
+                executeDropAndPickup(hrp, baseCFrame)
             end
         end
     end
@@ -356,7 +342,10 @@ local function monitorEggPickup(item)
             desc.Triggered:Connect(function(plr)
                 if plr == player then
                     statusLabel.Text = "Egg Collected! Processing..."
-                    task.wait(0.5) 
+                    -- Zero delay for Volcanic Egg so we immediately escape the guard pet
+                    if not isVolcanoEgg then
+                        task.wait(0.5)
+                    end
                     processEggPickup(item, isVolcanoEgg)
                 end
             end)
@@ -369,7 +358,10 @@ local function monitorEggPickup(item)
             if char and char:FindFirstChild("HumanoidRootPart") then
                 if (char.HumanoidRootPart.Position - initialPos).Magnitude < 15 then
                     statusLabel.Text = "Egg Collected! Processing..."
-                    task.wait(0.5) 
+                    -- Zero delay for Volcanic Egg so we immediately escape the guard pet
+                    if not isVolcanoEgg then
+                        task.wait(0.5)
+                    end
                     processEggPickup(item, isVolcanoEgg)
                     task.delay(1.5, function() if statusLabel.Text == "Egg Collected! Processing..." then statusLabel.Text = "" end end)
                 end
@@ -432,17 +424,22 @@ tpBestButton.MouseButton1Click:Connect(function()
             local isVolcanoEgg = string.find(string.lower(bestEgg.Name), "volcanic egg") ~= nil
             
             if isVolcanoEgg then
-                local portal = findVolcanoPortal()
-                if portal then
-                    hrp.CFrame = CFrame.new(portal.Position + Vector3.new(0, 3, 0))
-                    task.wait(0.1)
-                    if firetouchinterest then
-                        pcall(function() firetouchinterest(hrp, portal, 0); task.wait(); firetouchinterest(hrp, portal, 1) end)
-                    end
-                    task.wait(0.2)
-                end
+                isEnteringVolcano = true
+                
+                strikeTrigger(char, hrp, VOLCANO_ENTRANCE_POS)
+                strikeTrigger(char, hrp, VOLCANO_VALIDATE_POS)
+                strikeTrigger(char, hrp, VOLCANIC_POS)
+                strikeTrigger(char, hrp, VOLCANIC_POS)
+                task.wait(1.5)
+                
+                hrp.AssemblyLinearVelocity = Vector3.zero
+                char:PivotTo(CFrame.new(bestEgg:GetPivot().Position + Vector3.new(0, 4, 0)))
+                
+                isEnteringVolcano = false
+                statusLabel.Text = "Ready! Pick up egg."
+            else
+                teleportOnly(bestEgg)
             end
-            teleportOnly(bestEgg)
         end
     else
         statusLabel.Text = "No valid eggs found."
