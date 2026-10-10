@@ -143,7 +143,7 @@ local function executeDropAndPickup(hrp, baseCFrame)
 
     for i = 1, 40 do 
         local closestPrompt = nil
-        local minDist = 30
+        local minDist = 15
         for _, desc in ipairs(Workspace:GetDescendants()) do
             if desc:IsA("ProximityPrompt") and desc.Parent and desc.Parent:IsA("BasePart") then
                 local dist = (desc.Parent.Position - hrp.Position).Magnitude
