@@ -22,8 +22,8 @@ local settings = {
 	autoBuyEgg = false,
 	moveMode = "Max", 
 	speed = 250,
-	tpDelay = 0.05, 
-	nearDepositThreshold = 200, 
+	tpDelay = 0.15, -- Hardcoded optimal pickup delay
+	nearDepositThreshold = 500, 
 	eggCost = 50 
 }
 
@@ -55,6 +55,7 @@ local function getAliveCharacterParts()
 end
 
 local function getPlayerHalloweenTokens()
+	-- 1. Check Player Attributes & Leaderstats
 	for attrName, val in pairs(player:GetAttributes()) do
 		local lower = attrName:lower()
 		if type(val) == "number" and (lower:find("candy") or lower:find("token") or lower:find("halloween")) then
@@ -69,12 +70,15 @@ local function getPlayerHalloweenTokens()
 			end
 		end
 	end
+	
+	-- 2. Check PlayerGui specifically for HalloweenTokens UI structure
 	local pGui = player:FindFirstChild("PlayerGui")
 	if pGui then
 		for _, guiObj in ipairs(pGui:GetDescendants()) do
 			if guiObj:IsA("TextLabel") and guiObj.Visible then
-				local pName = (guiObj.Name .. " " .. (guiObj.Parent and guiObj.Parent.Name or "")):lower()
-				if pName:find("candy") or pName:find("token") or pName:find("halloween") then
+				local pName = guiObj.Name
+				local parentName = guiObj.Parent and guiObj.Parent.Name or ""
+				if pName == "HalloweenTokens" or parentName == "HalloweenTokens" then
 					local clean = guiObj.Text:gsub(",", "")
 					local num = tonumber(clean:match("%d+"))
 					if num then return num end
@@ -245,7 +249,9 @@ local function tpTo(destinationPos)
 	local _, yRot, _ = hrp.CFrame:ToOrientation()
 	hrp.CFrame = CFrame.new(destinationPos + Vector3.new(0, 2.5, 0)) * CFrame.Angles(0, yRot, 0)
 	requestStreamSafe(destinationPos)
-	if settings.tpDelay > 0 then task.wait(settings.tpDelay) end
+	
+	task.wait(settings.tpDelay) 
+	
 	if hrp and hrp.Parent then
 		hrp.AssemblyLinearVelocity = Vector3.zero
 		hrp.AssemblyAngularVelocity = Vector3.zero
@@ -389,7 +395,6 @@ local function performDeposit(forceTweenBack)
 	local hum, hrp = getAliveCharacterParts()
 	if not hrp then return end
 	
-	-- Robust deposit verification to fix "hands full" 
 	for i = 1, 3 do
 		if firetouchinterest then
 			for _, part in ipairs(dropPoint:GetDescendants()) do
@@ -410,7 +415,7 @@ local function performDeposit(forceTweenBack)
 		task.wait(0.05)
 		hum:MoveTo(dropPos)
 	end
-	task.wait(0.1) -- Guaranteed pause to ensure server clears the bag
+	task.wait(0.1) 
 	
 	lastFarTargetCollected = false
 	canAffordEggSinceLastDeposit = true 
@@ -430,25 +435,17 @@ local function collectTarget(targetData)
 	if not hrp then return false end
 	if targetData.candyId then pcall(function() collectRemote:FireServer(targetData.candyId) end) end
 
-	-- Smart verification: wait for candy to disappear or pad to empty to prevent skipping
 	local pickupTime = tick()
 	if targetData.isPad then
-		while hasActiveCandyOnPad(inst) and (tick() - pickupTime < 0.6) do
-			task.wait(0.02)
-		end
+		while hasActiveCandyOnPad(inst) and (tick() - pickupTime < 0.6) do task.wait(0.02) end
 	else
-		while inst and inst.Parent and (tick() - pickupTime < 0.6) do
-			task.wait(0.02)
-		end
+		while inst and inst.Parent and (tick() - pickupTime < 0.6) do task.wait(0.02) end
 	end
 	
 	if targetData.isPad then spawnPadCooldowns[inst] = tick()
 	else collectedInstances[inst] = tick() end
 
-	-- Hardcoded deposit after every candy
-	if targetData.isFar then
-		lastFarTargetCollected = true
-	end
+	if targetData.isFar then lastFarTargetCollected = true end
 	performDeposit(lastFarTargetCollected)
 
 	return true
@@ -499,7 +496,7 @@ scrollFrame.Position = UDim2.new(0.04, 0, 0, 58)
 scrollFrame.BackgroundTransparency = 1
 scrollFrame.BorderSizePixel = 0
 scrollFrame.ScrollBarThickness = 4
-scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 320)
+scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 290)
 scrollFrame.Parent = mainFrame
 local listLayout = Instance.new("UIListLayout")
 listLayout.Padding = UDim.new(0, 5)
@@ -649,17 +646,13 @@ for _, mName in ipairs({"Max", "Walk", "Tween"}) do
 	end)
 end
 
-createSlider("TP Delay (sec)", 0.01, 0.50, settings.tpDelay, true, 5, function(val)
-	settings.tpDelay = val
-end)
-
-createSlider("Walk/Tween Speed", 50, 1000, settings.speed, false, 6, function(val)
+createSlider("Walk/Tween Speed", 50, 3000, settings.speed, false, 4, function(val)
 	settings.speed = val
 end)
 
-local nearRanges = {140, 200, 260, 320, 400, 500}
-local rangeIdx = 2
-createItemButton("Near TP Range: " .. settings.nearDepositThreshold, 7, function(btn)
+local nearRanges = {500, 1000, 1500, 2000, 3000}
+local rangeIdx = 1
+createItemButton("Near TP Range: " .. settings.nearDepositThreshold, 5, function(btn)
 	rangeIdx = (rangeIdx % #nearRanges) + 1
 	settings.nearDepositThreshold = nearRanges[rangeIdx]
 	btn.Text = "Near TP Range: " .. settings.nearDepositThreshold
@@ -667,23 +660,23 @@ end)
 
 local eggCosts = {25, 50, 75, 100, 150, 200}
 local costIdx = 2
-createItemButton("Min Egg Tokens: " .. settings.eggCost, 8, function(btn)
+createItemButton("Min Egg Tokens: " .. settings.eggCost, 6, function(btn)
 	costIdx = (costIdx % #eggCosts) + 1
 	settings.eggCost = eggCosts[costIdx]
 	canAffordEggSinceLastDeposit = true
 	btn.Text = "Min Egg Tokens: " .. settings.eggCost
 end)
 
-createItemButton("Buy Egg Once (Flash)", 9, function()
+createItemButton("Buy Egg Once (Flash)", 7, function()
 	task.spawn(function() flashBuyHalloweenEgg(true) end)
 end)
 
-createItemButton("Reset Visited Memory", 10, function()
+createItemButton("Reset Visited Memory", 8, function()
 	table.clear(collectedInstances)
 	table.clear(spawnPadCooldowns)
 end)
 
-createItemButton("Go to Deposit", 11, function()
+createItemButton("Go to Deposit", 9, function()
 	task.spawn(function() pcall(function() performDeposit(false) end) end)
 end)
 
