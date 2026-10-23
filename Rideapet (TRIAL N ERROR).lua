@@ -3,11 +3,12 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 local CoreGui = game:GetService("CoreGui")
 
 local player = Players.LocalPlayer
 
--- UI Parent Setup (Supports Delta / Mobile)
+-- UI Parent Setup
 local parentGui = nil
 pcall(function() parentGui = gethui and gethui() end)
 if not parentGui then parentGui = CoreGui:FindFirstChild("RobloxGui") or player:WaitForChild("PlayerGui") end
@@ -23,6 +24,7 @@ local settings = {
 	depositEveryCandy = false,
 	moveMode = "Max", 
 	speed = 250,
+	tpDelay = 0.15, -- Default teleport remote delay
 	nearDepositThreshold = 200, 
 	eggCost = 50 
 }
@@ -142,7 +144,6 @@ local function getDepositPos()
 	return dropPoint and getObjectPos(dropPoint), dropPoint
 end
 
--- Dynamic Candy ID Extractor (Translates "Mid01" -> "Candy2_1")
 local function getExactCandyId(inst)
 	if not inst or not inst.Parent then return nil end
 	
@@ -254,7 +255,8 @@ local function tpTo(destinationPos)
 	local _, yRot, _ = hrp.CFrame:ToOrientation()
 	hrp.CFrame = CFrame.new(destinationPos + Vector3.new(0, 2.5, 0)) * CFrame.Angles(0, yRot, 0)
 	requestStreamSafe(destinationPos)
-	task.wait(0.22)
+	-- Dynamic TP delay based on user slider
+	if settings.tpDelay > 0 then task.wait(settings.tpDelay) end
 	if hrp and hrp.Parent then
 		hrp.AssemblyLinearVelocity = Vector3.zero
 		hrp.AssemblyAngularVelocity = Vector3.zero
@@ -292,13 +294,14 @@ local function tweenTo(destinationPos)
 		hrp.AssemblyLinearVelocity = Vector3.zero
 		hrp.AssemblyAngularVelocity = Vector3.zero
 	end
-	task.wait(0.15)
+	-- Replaced long static wait with minimal yield
+	task.wait(0.05)
 	return true
 end
 
 local function walkTo(destinationPos, customStopRadius)
 	local hum, hrp = getAliveCharacterParts()
-	if not hum or not hrp then return false end
+	if not hrp then return false end
 	requestStreamSafe(destinationPos)
 	local stopRadius = customStopRadius or 3
 	local timeout = tick()
@@ -318,7 +321,6 @@ local function walkTo(destinationPos, customStopRadius)
 		task.wait(0.02)
 	end
 	if hrp and hrp.Parent then hrp.AssemblyLinearVelocity = Vector3.new(0, hrp.AssemblyLinearVelocity.Y, 0) end
-	task.wait(0.15)
 	return true
 end
 
@@ -411,11 +413,8 @@ local function performDeposit(forceTweenBack)
 	end
 	if hum then
 		hum:MoveTo(dropPos + Vector3.new(2, 0, 0))
-		task.wait(0.15)
+		task.wait(0.05)
 		hum:MoveTo(dropPos)
-		task.wait(0.15)
-	else
-		task.wait(0.3)
 	end
 	collectedCountSinceDeposit = 0
 	lastFarTargetCollected = false
@@ -447,13 +446,13 @@ local function collectTarget(targetData)
 					hrp.CFrame = CFrame.new(cPos + Vector3.new(0, 2, 0))
 					hrp.AssemblyLinearVelocity = Vector3.zero
 				end
-				task.wait(0.12)
+				task.wait(0.05)
 				pcall(function() collectRemote:FireServer(cId) end)
 				collectedInstances[cObj] = tick()
 			end
 		end
 	end
-	task.wait(0.08)
+	
 	if targetData.isPad then spawnPadCooldowns[inst] = tick()
 	else collectedInstances[inst] = tick() end
 	collectedCountSinceDeposit = collectedCountSinceDeposit + 1
@@ -512,7 +511,7 @@ scrollFrame.Position = UDim2.new(0.04, 0, 0, 58)
 scrollFrame.BackgroundTransparency = 1
 scrollFrame.BorderSizePixel = 0
 scrollFrame.ScrollBarThickness = 4
-scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 320)
+scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 360)
 scrollFrame.Parent = mainFrame
 
 local listLayout = Instance.new("UIListLayout")
@@ -540,6 +539,79 @@ local function createItemButton(text, order, callback)
 	btnCorner.Parent = btn
 	btn.MouseButton1Click:Connect(function() callback(btn) end)
 	return btn
+end
+
+-- Draggable Slider Element Creator
+local function createSlider(name, minVal, maxVal, currentVal, isFloat, order, callback)
+	local container = Instance.new("Frame")
+	container.Size = UDim2.new(0.96, 0, 0, 38)
+	container.LayoutOrder = order
+	container.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+	container.Parent = scrollFrame
+	local cCorner = Instance.new("UICorner")
+	cCorner.CornerRadius = UDim.new(0, 6)
+	cCorner.Parent = container
+
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(1, 0, 0, 18)
+	label.BackgroundTransparency = 1
+	label.Text = name .. ": " .. tostring(currentVal)
+	label.TextColor3 = Color3.fromRGB(255, 255, 255)
+	label.TextSize = 11
+	label.Font = Enum.Font.Gotham
+	label.Parent = container
+
+	local track = Instance.new("Frame")
+	track.Size = UDim2.new(0.9, 0, 0, 8)
+	track.Position = UDim2.new(0.05, 0, 0, 22)
+	track.BackgroundColor3 = Color3.fromRGB(30, 30, 36)
+	track.Parent = container
+	local tCorner = Instance.new("UICorner")
+	tCorner.CornerRadius = UDim.new(1, 0)
+	tCorner.Parent = track
+
+	local fill = Instance.new("Frame")
+	local startRatio = math.clamp((currentVal - minVal) / (maxVal - minVal), 0, 1)
+	fill.Size = UDim2.new(startRatio, 0, 1, 0)
+	fill.BackgroundColor3 = Color3.fromRGB(255, 170, 0)
+	fill.Parent = track
+	local fCorner = Instance.new("UICorner")
+	fCorner.CornerRadius = UDim.new(1, 0)
+	fCorner.Parent = fill
+
+	local dragging = false
+	local function update(input)
+		local xPos = input.Position.X - track.AbsolutePosition.X
+		local ratio = math.clamp(xPos / track.AbsoluteSize.X, 0, 1)
+		fill.Size = UDim2.new(ratio, 0, 1, 0)
+		local val = minVal + (maxVal - minVal) * ratio
+		if not isFloat then 
+			val = math.floor(val) 
+		else 
+			val = math.floor(val * 100) / 100 
+		end
+		label.Text = name .. ": " .. tostring(val)
+		callback(val)
+	end
+
+	track.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			update(input)
+		end
+	end)
+	UserInputService.InputChanged:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			update(input)
+		end
+	end)
+	UserInputService.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = false
+		end
+	end)
+
+	return container
 end
 
 createItemButton("Collect All Candy: OFF", 1, function(btn)
@@ -602,9 +674,18 @@ for _, mName in ipairs({"Max", "Walk", "Tween"}) do
 	end)
 end
 
+-- New Sliders for Delay and Speed
+createSlider("TP Delay (sec)", 0.01, 0.50, settings.tpDelay, true, 5, function(val)
+	settings.tpDelay = val
+end)
+
+createSlider("Walk/Tween Speed", 50, 1000, settings.speed, false, 6, function(val)
+	settings.speed = val
+end)
+
 local nearRanges = {140, 200, 260, 320, 400, 500}
 local rangeIdx = 2
-createItemButton("Near TP Range: " .. settings.nearDepositThreshold, 5, function(btn)
+createItemButton("Near TP Range: " .. settings.nearDepositThreshold, 7, function(btn)
 	rangeIdx = (rangeIdx % #nearRanges) + 1
 	settings.nearDepositThreshold = nearRanges[rangeIdx]
 	btn.Text = "Near TP Range: " .. settings.nearDepositThreshold
@@ -612,37 +693,29 @@ end)
 
 local eggCosts = {25, 50, 75, 100, 150, 200}
 local costIdx = 2
-createItemButton("Min Egg Tokens: " .. settings.eggCost, 6, function(btn)
+createItemButton("Min Egg Tokens: " .. settings.eggCost, 8, function(btn)
 	costIdx = (costIdx % #eggCosts) + 1
 	settings.eggCost = eggCosts[costIdx]
 	canAffordEggSinceLastDeposit = true
 	btn.Text = "Min Egg Tokens: " .. settings.eggCost
 end)
 
-local speeds = {80, 150, 250, 400, 600, 800}
-local speedIdx = 3
-createItemButton("Speed: " .. settings.speed, 7, function(btn)
-	speedIdx = (speedIdx % #speeds) + 1
-	settings.speed = speeds[speedIdx]
-	btn.Text = "Speed: " .. settings.speed
-end)
-
-createItemButton("Deposit Every Candy: OFF", 8, function(btn)
+createItemButton("Deposit Every Candy: OFF", 9, function(btn)
 	settings.depositEveryCandy = not settings.depositEveryCandy
 	btn.Text = "Deposit Every Candy: " .. (settings.depositEveryCandy and "ON" or "OFF")
 	btn.BackgroundColor3 = settings.depositEveryCandy and Color3.fromRGB(46, 125, 50) or Color3.fromRGB(45, 45, 55)
 end)
 
-createItemButton("Buy Egg Once (Flash)", 9, function()
+createItemButton("Buy Egg Once (Flash)", 10, function()
 	task.spawn(function() flashBuyHalloweenEgg(true) end)
 end)
 
-createItemButton("Reset Visited Memory", 10, function()
+createItemButton("Reset Visited Memory", 11, function()
 	table.clear(collectedInstances)
 	table.clear(spawnPadCooldowns)
 end)
 
-createItemButton("Go to Deposit", 11, function()
+createItemButton("Go to Deposit", 12, function()
 	task.spawn(function() pcall(function() performDeposit(false) end) end)
 end)
 
@@ -695,7 +768,7 @@ task.spawn(function()
 					elseif settings.autoBuyEgg and hasSufficientHalloweenTokens() then
 						flashBuyHalloweenEgg(false)
 					end
-					task.wait(0.3)
+					task.wait(0.1)
 				end
 			end)
 			if not ok then
@@ -703,6 +776,6 @@ task.spawn(function()
 				task.wait(0.5)
 			end
 		end
-		task.wait(0.05)
+		task.wait(0.02)
 	end
 end)
