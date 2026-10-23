@@ -8,7 +8,6 @@ local CoreGui = game:GetService("CoreGui")
 
 local player = Players.LocalPlayer
 
--- UI Parent Setup
 local parentGui = nil
 pcall(function() parentGui = gethui and gethui() end)
 if not parentGui then parentGui = CoreGui:FindFirstChild("RobloxGui") or player:WaitForChild("PlayerGui") end
@@ -21,10 +20,9 @@ end
 local settings = {
 	autoFarmLoop = false,
 	autoBuyEgg = false,
-	depositEveryCandy = false,
 	moveMode = "Max", 
 	speed = 250,
-	tpDelay = 0.15, -- Default teleport remote delay
+	tpDelay = 0.05, 
 	nearDepositThreshold = 200, 
 	eggCost = 50 
 }
@@ -33,7 +31,6 @@ local currentTween = nil
 local collectedInstances = {}
 local spawnPadCooldowns = {}
 local cachedSpawns = setmetatable({}, {__mode = "k"})
-local collectedCountSinceDeposit = 0
 local lastFarTargetCollected = false
 local isBuyingEgg = false
 local canAffordEggSinceLastDeposit = true 
@@ -146,7 +143,6 @@ end
 
 local function getExactCandyId(inst)
 	if not inst or not inst.Parent then return nil end
-	
 	if inst.Name:match("^[A-Za-z]+%d+$") then
 		local zone, numStr = inst.Name:match("^([A-Za-z]+)(%d+)$")
 		if zone and numStr then
@@ -159,9 +155,7 @@ local function getExactCandyId(inst)
 			return "Candy" .. zoneId .. "_" .. tostring(tonumber(numStr))
 		end
 	end
-
 	if inst.Name:match("^Candy%d+_%d+") then return inst.Name end
-
 	local ok, attrs = pcall(function() return inst:GetAttributes() end)
 	if ok and attrs then
 		local spawnId = attrs["SpawnId"] or attrs["Id"]
@@ -201,11 +195,9 @@ local function getAllWorldCandies()
 	local targets = {}
 	local now = tick()
 	local dropPos = getDepositPos()
-
 	for inst, timestamp in pairs(collectedInstances) do
 		if not inst or not inst.Parent or (now - timestamp > 15) then collectedInstances[inst] = nil end
 	end
-
 	local halloweenCandyFolder = Workspace:FindFirstChild("HalloweenCandy")
 	if halloweenCandyFolder then
 		for _, candy in ipairs(halloweenCandyFolder:GetChildren()) do
@@ -219,7 +211,6 @@ local function getAllWorldCandies()
 			end
 		end
 	end
-
 	local hArea = Workspace:FindFirstChild("HalloweenArea")
 	local spawns = hArea and hArea:FindFirstChild("CandySpawns")
 	if spawns then
@@ -234,7 +225,6 @@ local function getAllWorldCandies()
 			end
 		end
 	end
-
 	local _, hrp = getAliveCharacterParts()
 	if hrp then
 		table.sort(targets, function(a, b)
@@ -255,7 +245,6 @@ local function tpTo(destinationPos)
 	local _, yRot, _ = hrp.CFrame:ToOrientation()
 	hrp.CFrame = CFrame.new(destinationPos + Vector3.new(0, 2.5, 0)) * CFrame.Angles(0, yRot, 0)
 	requestStreamSafe(destinationPos)
-	-- Dynamic TP delay based on user slider
 	if settings.tpDelay > 0 then task.wait(settings.tpDelay) end
 	if hrp and hrp.Parent then
 		hrp.AssemblyLinearVelocity = Vector3.zero
@@ -294,7 +283,6 @@ local function tweenTo(destinationPos)
 		hrp.AssemblyLinearVelocity = Vector3.zero
 		hrp.AssemblyAngularVelocity = Vector3.zero
 	end
-	-- Replaced long static wait with minimal yield
 	task.wait(0.05)
 	return true
 end
@@ -400,23 +388,30 @@ local function performDeposit(forceTweenBack)
 
 	local hum, hrp = getAliveCharacterParts()
 	if not hrp then return end
-	if firetouchinterest then
-		for _, part in ipairs(dropPoint:GetDescendants()) do
-			if part:IsA("BasePart") then
-				pcall(function()
-					firetouchinterest(hrp, part, 0)
-					task.wait(0.02)
-					firetouchinterest(hrp, part, 1)
-				end)
+	
+	-- Robust deposit verification to fix "hands full" 
+	for i = 1, 3 do
+		if firetouchinterest then
+			for _, part in ipairs(dropPoint:GetDescendants()) do
+				if part:IsA("BasePart") then
+					pcall(function()
+						firetouchinterest(hrp, part, 0)
+						task.wait(0.02)
+						firetouchinterest(hrp, part, 1)
+					end)
+				end
 			end
 		end
+		task.wait(0.05)
 	end
+	
 	if hum then
 		hum:MoveTo(dropPos + Vector3.new(2, 0, 0))
 		task.wait(0.05)
 		hum:MoveTo(dropPos)
 	end
-	collectedCountSinceDeposit = 0
+	task.wait(0.1) -- Guaranteed pause to ensure server clears the bag
+	
 	lastFarTargetCollected = false
 	canAffordEggSinceLastDeposit = true 
 	if settings.autoBuyEgg and hasSufficientHalloweenTokens() then flashBuyHalloweenEgg(false) end
@@ -435,32 +430,27 @@ local function collectTarget(targetData)
 	if not hrp then return false end
 	if targetData.candyId then pcall(function() collectRemote:FireServer(targetData.candyId) end) end
 
-	local currentPos = getObjectPos(inst) or targetData.pos
-	local hCandy = Workspace:FindFirstChild("HalloweenCandy")
-	if hCandy then
-		for _, cObj in ipairs(hCandy:GetChildren()) do
-			local cPos = getObjectPos(cObj)
-			local cId = getExactCandyId(cObj)
-			if cPos and cId and (cPos - currentPos).Magnitude < 25 then
-				if hrp and hrp.Parent then
-					hrp.CFrame = CFrame.new(cPos + Vector3.new(0, 2, 0))
-					hrp.AssemblyLinearVelocity = Vector3.zero
-				end
-				task.wait(0.05)
-				pcall(function() collectRemote:FireServer(cId) end)
-				collectedInstances[cObj] = tick()
-			end
+	-- Smart verification: wait for candy to disappear or pad to empty to prevent skipping
+	local pickupTime = tick()
+	if targetData.isPad then
+		while hasActiveCandyOnPad(inst) and (tick() - pickupTime < 0.6) do
+			task.wait(0.02)
+		end
+	else
+		while inst and inst.Parent and (tick() - pickupTime < 0.6) do
+			task.wait(0.02)
 		end
 	end
 	
 	if targetData.isPad then spawnPadCooldowns[inst] = tick()
 	else collectedInstances[inst] = tick() end
-	collectedCountSinceDeposit = collectedCountSinceDeposit + 1
 
+	-- Hardcoded deposit after every candy
 	if targetData.isFar then
 		lastFarTargetCollected = true
-		if settings.moveMode == "Max" then performDeposit(true) end
 	end
+	performDeposit(lastFarTargetCollected)
+
 	return true
 end
 
@@ -470,14 +460,13 @@ screenGui.ResetOnSpawn = false
 screenGui.Parent = parentGui
 
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 220, 0, 250)
+mainFrame.Size = UDim2.new(0, 220, 0, 225)
 mainFrame.Position = UDim2.new(0.5, -110, 0.3, 0)
 mainFrame.BackgroundColor3 = Color3.fromRGB(22, 22, 26)
 mainFrame.BorderSizePixel = 0
 mainFrame.Active = true
 mainFrame.Draggable = true
 mainFrame.Parent = screenGui
-
 local corner = Instance.new("UICorner")
 corner.CornerRadius = UDim.new(0, 8)
 corner.Parent = mainFrame
@@ -500,26 +489,23 @@ candyLabel.Text = "Candy: ... | Tokens: ..."
 candyLabel.TextSize = 11
 candyLabel.Font = Enum.Font.GothamSemibold
 candyLabel.Parent = mainFrame
-
 local labelCorner = Instance.new("UICorner")
 labelCorner.CornerRadius = UDim.new(0, 6)
 labelCorner.Parent = candyLabel
 
 local scrollFrame = Instance.new("ScrollingFrame")
-scrollFrame.Size = UDim2.new(0.92, 0, 0, 184)
+scrollFrame.Size = UDim2.new(0.92, 0, 0, 158)
 scrollFrame.Position = UDim2.new(0.04, 0, 0, 58)
 scrollFrame.BackgroundTransparency = 1
 scrollFrame.BorderSizePixel = 0
 scrollFrame.ScrollBarThickness = 4
-scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 360)
+scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 320)
 scrollFrame.Parent = mainFrame
-
 local listLayout = Instance.new("UIListLayout")
 listLayout.Padding = UDim.new(0, 5)
 listLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 listLayout.SortOrder = Enum.SortOrder.LayoutOrder
 listLayout.Parent = scrollFrame
-
 listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
 	scrollFrame.CanvasSize = UDim2.new(0, 0, 0, listLayout.AbsoluteContentSize.Y + 8)
 end)
@@ -541,7 +527,6 @@ local function createItemButton(text, order, callback)
 	return btn
 end
 
--- Draggable Slider Element Creator
 local function createSlider(name, minVal, maxVal, currentVal, isFloat, order, callback)
 	local container = Instance.new("Frame")
 	container.Size = UDim2.new(0.96, 0, 0, 38)
@@ -551,7 +536,6 @@ local function createSlider(name, minVal, maxVal, currentVal, isFloat, order, ca
 	local cCorner = Instance.new("UICorner")
 	cCorner.CornerRadius = UDim.new(0, 6)
 	cCorner.Parent = container
-
 	local label = Instance.new("TextLabel")
 	label.Size = UDim2.new(1, 0, 0, 18)
 	label.BackgroundTransparency = 1
@@ -560,7 +544,6 @@ local function createSlider(name, minVal, maxVal, currentVal, isFloat, order, ca
 	label.TextSize = 11
 	label.Font = Enum.Font.Gotham
 	label.Parent = container
-
 	local track = Instance.new("Frame")
 	track.Size = UDim2.new(0.9, 0, 0, 8)
 	track.Position = UDim2.new(0.05, 0, 0, 22)
@@ -569,7 +552,6 @@ local function createSlider(name, minVal, maxVal, currentVal, isFloat, order, ca
 	local tCorner = Instance.new("UICorner")
 	tCorner.CornerRadius = UDim.new(1, 0)
 	tCorner.Parent = track
-
 	local fill = Instance.new("Frame")
 	local startRatio = math.clamp((currentVal - minVal) / (maxVal - minVal), 0, 1)
 	fill.Size = UDim2.new(startRatio, 0, 1, 0)
@@ -578,22 +560,16 @@ local function createSlider(name, minVal, maxVal, currentVal, isFloat, order, ca
 	local fCorner = Instance.new("UICorner")
 	fCorner.CornerRadius = UDim.new(1, 0)
 	fCorner.Parent = fill
-
 	local dragging = false
 	local function update(input)
 		local xPos = input.Position.X - track.AbsolutePosition.X
 		local ratio = math.clamp(xPos / track.AbsoluteSize.X, 0, 1)
 		fill.Size = UDim2.new(ratio, 0, 1, 0)
 		local val = minVal + (maxVal - minVal) * ratio
-		if not isFloat then 
-			val = math.floor(val) 
-		else 
-			val = math.floor(val * 100) / 100 
-		end
+		if not isFloat then val = math.floor(val) else val = math.floor(val * 100) / 100 end
 		label.Text = name .. ": " .. tostring(val)
 		callback(val)
 	end
-
 	track.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 			dragging = true
@@ -610,7 +586,6 @@ local function createSlider(name, minVal, maxVal, currentVal, isFloat, order, ca
 			dragging = false
 		end
 	end)
-
 	return container
 end
 
@@ -674,7 +649,6 @@ for _, mName in ipairs({"Max", "Walk", "Tween"}) do
 	end)
 end
 
--- New Sliders for Delay and Speed
 createSlider("TP Delay (sec)", 0.01, 0.50, settings.tpDelay, true, 5, function(val)
 	settings.tpDelay = val
 end)
@@ -700,22 +674,16 @@ createItemButton("Min Egg Tokens: " .. settings.eggCost, 8, function(btn)
 	btn.Text = "Min Egg Tokens: " .. settings.eggCost
 end)
 
-createItemButton("Deposit Every Candy: OFF", 9, function(btn)
-	settings.depositEveryCandy = not settings.depositEveryCandy
-	btn.Text = "Deposit Every Candy: " .. (settings.depositEveryCandy and "ON" or "OFF")
-	btn.BackgroundColor3 = settings.depositEveryCandy and Color3.fromRGB(46, 125, 50) or Color3.fromRGB(45, 45, 55)
-end)
-
-createItemButton("Buy Egg Once (Flash)", 10, function()
+createItemButton("Buy Egg Once (Flash)", 9, function()
 	task.spawn(function() flashBuyHalloweenEgg(true) end)
 end)
 
-createItemButton("Reset Visited Memory", 11, function()
+createItemButton("Reset Visited Memory", 10, function()
 	table.clear(collectedInstances)
 	table.clear(spawnPadCooldowns)
 end)
 
-createItemButton("Go to Deposit", 12, function()
+createItemButton("Go to Deposit", 11, function()
 	task.spawn(function() pcall(function() performDeposit(false) end) end)
 end)
 
@@ -759,13 +727,8 @@ task.spawn(function()
 				if #allTargets > 0 then
 					local bestTarget = allTargets[1]
 					collectTarget(bestTarget)
-					if settings.autoFarmLoop and collectedCountSinceDeposit > 0 and (settings.depositEveryCandy or collectedCountSinceDeposit >= 10) then
-						performDeposit(false)
-					end
 				else
-					if collectedCountSinceDeposit > 0 then
-						performDeposit(false)
-					elseif settings.autoBuyEgg and hasSufficientHalloweenTokens() then
+					if settings.autoBuyEgg and hasSufficientHalloweenTokens() then
 						flashBuyHalloweenEgg(false)
 					end
 					task.wait(0.1)
