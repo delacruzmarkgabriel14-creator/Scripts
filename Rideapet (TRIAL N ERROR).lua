@@ -1,141 +1,56 @@
-print("[DomainTester] Starting script...")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
 
 local player = Players.LocalPlayer
-local parentGui = nil
+local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
 
--- Safely attempt to get executor UI folder, fallback to PlayerGui
-pcall(function() 
-	if gethui then parentGui = gethui() end 
-end)
-if not parentGui then 
-	parentGui = player:FindFirstChild("PlayerGui") 
+if not hrp then
+    warn("[Domain Prompt] Character not found!")
+    return
 end
 
-if not parentGui then
-	warn("[DomainTester] Error: Could not find a valid GUI parent.")
-	return
+local nearestPrompt = nil
+local shortestDistance = 20 -- Searches within a 20-stud radius
+
+for _, desc in ipairs(Workspace:GetDescendants()) do
+    if desc:IsA("ProximityPrompt") then
+        local pos = nil
+        if desc.Parent:IsA("Attachment") then
+            pos = desc.Parent.WorldPosition
+        elseif desc.Parent:IsA("BasePart") then
+            pos = desc.Parent.Position
+        end
+        
+        if pos then
+            local dist = (hrp.Position - pos).Magnitude
+            if dist < shortestDistance then
+                shortestDistance = dist
+                nearestPrompt = desc
+            end
+        end
+    end
 end
-print("[DomainTester] GUI Parent found:", parentGui.Name)
 
-local uiName = "DomainTesterUI"
-local oldGui = parentGui:FindFirstChild(uiName)
-if oldGui then oldGui:Destroy() end
-
-local fadeRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Game"):WaitForChild("HalloweenFade")
-
-local screen = Instance.new("ScreenGui")
-screen.Name = uiName
-screen.ResetOnSpawn = false
-screen.Parent = parentGui
-
-local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 200, 0, 150)
-frame.Position = UDim2.new(0.5, 120, 0.4, 0)
-frame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
-frame.BorderSizePixel = 0
-frame.Active = true
-frame.Draggable = true
-frame.Parent = screen
-
-local corner = Instance.new("UICorner")
-corner.CornerRadius = UDim.new(0, 8)
-corner.Parent = frame
-
-local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, 0, 0, 30)
-title.Text = "🦇 Domain & Token"
-title.TextColor3 = Color3.fromRGB(255, 170, 0)
-title.BackgroundTransparency = 1
-title.Font = Enum.Font.GothamBold
-title.Parent = frame
-
-local tokenDisplay = Instance.new("TextLabel")
-tokenDisplay.Size = UDim2.new(0.9, 0, 0, 25)
-tokenDisplay.Position = UDim2.new(0.05, 0, 0, 35)
-tokenDisplay.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
-tokenDisplay.TextColor3 = Color3.fromRGB(255, 255, 255)
-tokenDisplay.Text = "Tokens: ..."
-tokenDisplay.Font = Enum.Font.GothamSemibold
-tokenDisplay.Parent = frame
-
-local tokenCorner = Instance.new("UICorner")
-tokenCorner.CornerRadius = UDim.new(0, 6)
-tokenCorner.Parent = tokenDisplay
-
-local btnEnter = Instance.new("TextButton")
-btnEnter.Size = UDim2.new(0.9, 0, 0, 30)
-btnEnter.Position = UDim2.new(0.05, 0, 0, 70)
-btnEnter.Text = "Enter Domain (1)"
-btnEnter.BackgroundColor3 = Color3.fromRGB(46, 125, 50)
-btnEnter.TextColor3 = Color3.new(1, 1, 1)
-btnEnter.Font = Enum.Font.GothamSemibold
-btnEnter.Parent = frame
-
-local cornerEnter = Instance.new("UICorner")
-cornerEnter.CornerRadius = UDim.new(0, 6)
-cornerEnter.Parent = btnEnter
-
-btnEnter.MouseButton1Click:Connect(function()
-	pcall(function()
-		local args = { [1] = "Ready", [2] = 1 }
-		fadeRemote:FireServer(unpack(args))
-		print("[DomainTester] Fired Enter")
-	end)
-end)
-
-local btnLeave = Instance.new("TextButton")
-btnLeave.Size = UDim2.new(0.9, 0, 0, 30)
-btnLeave.Position = UDim2.new(0.05, 0, 0, 110)
-btnLeave.Text = "Leave Domain (2)"
-btnLeave.BackgroundColor3 = Color3.fromRGB(150, 50, 50)
-btnLeave.TextColor3 = Color3.new(1, 1, 1)
-btnLeave.Font = Enum.Font.GothamSemibold
-btnLeave.Parent = frame
-
-local cornerLeave = Instance.new("UICorner")
-cornerLeave.CornerRadius = UDim.new(0, 6)
-cornerLeave.Parent = btnLeave
-
-btnLeave.MouseButton1Click:Connect(function()
-	pcall(function()
-		local args = { [1] = "Ready", [2] = 2 }
-		fadeRemote:FireServer(unpack(args))
-		print("[DomainTester] Fired Leave")
-	end)
-end)
-
-task.spawn(function()
-	while screen and screen.Parent do
-		local exactTokens = nil
-		local rawText = ""
-		
-		pcall(function()
-			local pGui = player:FindFirstChild("PlayerGui")
-			if pGui then
-				local main = pGui:FindFirstChild("Main")
-				if main then
-					local currency = main:FindFirstChild("Currency")
-					if currency then
-						local hTokens = currency:FindFirstChild("HalloweenTokens")
-						if hTokens and hTokens:IsA("TextLabel") then
-							rawText = hTokens.Text
-							local numStr = rawText:gsub("%D", "")
-							exactTokens = tonumber(numStr)
-						end
-					end
-				end
-			end
-		end)
-		
-		if exactTokens then
-			tokenDisplay.Text = "Tokens: " .. tostring(exactTokens)
-		else
-			tokenDisplay.Text = "Tokens: Not Found (" .. tostring(rawText) .. ")"
-		end
-		
-		task.wait(0.5)
-	end
-end)
-print("[DomainTester] Script loaded successfully.")
+if nearestPrompt and fireproximityprompt then
+    print("[Domain Prompt] Firing prompt:", nearestPrompt:GetFullName())
+    
+    local oldDist = nearestPrompt.MaxActivationDistance
+    local oldLos = nearestPrompt.RequiresLineOfSight
+    local oldHold = nearestPrompt.HoldDuration
+    
+    pcall(function()
+        nearestPrompt.MaxActivationDistance = 999999
+        nearestPrompt.RequiresLineOfSight = false
+        nearestPrompt.HoldDuration = 0
+        
+        fireproximityprompt(nearestPrompt)
+        
+        task.delay(0.25, function()
+            nearestPrompt.MaxActivationDistance = oldDist
+            nearestPrompt.RequiresLineOfSight = oldLos
+            nearestPrompt.HoldDuration = oldHold
+        end)
+    end)
+else
+    warn("[Domain Prompt] No prompt found nearby, or your executor lacks fireproximityprompt support.")
+end
