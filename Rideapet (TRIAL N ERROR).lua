@@ -1,11 +1,23 @@
+print("[DomainTester] Starting script...")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
-local CoreGui = game:GetService("CoreGui")
 
 local player = Players.LocalPlayer
 local parentGui = nil
-pcall(function() parentGui = gethui and gethui() end)
-if not parentGui then parentGui = CoreGui:FindFirstChild("RobloxGui") or player:WaitForChild("PlayerGui") end
+
+-- Safely attempt to get executor UI folder, fallback to PlayerGui
+pcall(function() 
+	if gethui then parentGui = gethui() end 
+end)
+if not parentGui then 
+	parentGui = player:FindFirstChild("PlayerGui") 
+end
+
+if not parentGui then
+	warn("[DomainTester] Error: Could not find a valid GUI parent.")
+	return
+end
+print("[DomainTester] GUI Parent found:", parentGui.Name)
 
 local uiName = "DomainTesterUI"
 local oldGui = parentGui:FindFirstChild(uiName)
@@ -33,7 +45,7 @@ corner.Parent = frame
 
 local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, 0, 0, 30)
-title.Text = "🦇 Domain & Token Tester"
+title.Text = "🦇 Domain & Token"
 title.TextColor3 = Color3.fromRGB(255, 170, 0)
 title.BackgroundTransparency = 1
 title.Font = Enum.Font.GothamBold
@@ -69,6 +81,7 @@ btnEnter.MouseButton1Click:Connect(function()
 	pcall(function()
 		local args = { [1] = "Ready", [2] = 1 }
 		fadeRemote:FireServer(unpack(args))
+		print("[DomainTester] Fired Enter")
 	end)
 end)
 
@@ -89,30 +102,32 @@ btnLeave.MouseButton1Click:Connect(function()
 	pcall(function()
 		local args = { [1] = "Ready", [2] = 2 }
 		fadeRemote:FireServer(unpack(args))
+		print("[DomainTester] Fired Leave")
 	end)
 end)
 
 task.spawn(function()
 	while screen and screen.Parent do
-		local pGui = player:FindFirstChild("PlayerGui")
 		local exactTokens = nil
 		local rawText = ""
 		
-		if pGui then
-			local main = pGui:FindFirstChild("Main")
-			if main then
-				local currency = main:FindFirstChild("Currency")
-				if currency then
-					local hTokens = currency:FindFirstChild("HalloweenTokens")
-					if hTokens and hTokens:IsA("TextLabel") then
-						rawText = hTokens.Text
-						-- Extract only digits, ignoring commas, symbols, or letters
-						local numStr = rawText:gsub("%D", "")
-						exactTokens = tonumber(numStr)
+		pcall(function()
+			local pGui = player:FindFirstChild("PlayerGui")
+			if pGui then
+				local main = pGui:FindFirstChild("Main")
+				if main then
+					local currency = main:FindFirstChild("Currency")
+					if currency then
+						local hTokens = currency:FindFirstChild("HalloweenTokens")
+						if hTokens and hTokens:IsA("TextLabel") then
+							rawText = hTokens.Text
+							local numStr = rawText:gsub("%D", "")
+							exactTokens = tonumber(numStr)
+						end
 					end
 				end
 			end
-		end
+		end)
 		
 		if exactTokens then
 			tokenDisplay.Text = "Tokens: " .. tostring(exactTokens)
@@ -123,3 +138,4 @@ task.spawn(function()
 		task.wait(0.5)
 	end
 end)
+print("[DomainTester] Script loaded successfully.")
